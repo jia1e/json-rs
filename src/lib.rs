@@ -10,7 +10,7 @@ pub enum Type {
     Object(HashMap<String, Type>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum JsonError {
     UnexpectToken,
 }
@@ -21,17 +21,17 @@ fn skip_whitespace(chars: &Vec<char>, pos: &mut usize) {
     }
 }
 
-fn expect_str(chars: &Vec<char>, pos: &mut usize, str: &str) -> Result<(), JsonError> {
+fn find_str(chars: &Vec<char>, pos: &mut usize, str: &str) -> bool {
     skip_whitespace(chars, pos);
     if *pos + str.len() <= chars.len() {
         for (i, ch) in str.chars().enumerate() {
             if chars[*pos + i] != ch {
-                return Err(JsonError::UnexpectToken);
+                return false;
             }
         }
-        Ok(())
+        true
     } else {
-        Err(JsonError::UnexpectToken)
+        false
     }
 }
 
@@ -46,15 +46,18 @@ fn parse_object(chars: &Vec<char>, pos: &mut usize) -> Result<Type, JsonError> {
         }
 
         if let Type::String(key) = _parse(chars, pos).unwrap() {
-            expect_str(chars, pos, ":").unwrap();
-            *pos += 1;
-            let value = _parse(chars, pos).unwrap();
-            hash.insert(key, value);
-            skip_whitespace(chars, pos);
-            match chars[*pos] {
-                ',' => *pos += 1,
-                '}' => continue,
-                _ => break,
+            if find_str(chars, pos, ":") {
+                *pos += 1;
+                let value = _parse(chars, pos).unwrap();
+                hash.insert(key, value);
+                skip_whitespace(chars, pos);
+                match chars[*pos] {
+                    ',' => *pos += 1,
+                    '}' => continue,
+                    _ => break,
+                }
+            } else {
+                break;
             }
         } else {
             break;
@@ -122,10 +125,13 @@ fn parse_number(chars: &Vec<char>, pos: &mut usize) -> Result<Type, JsonError> {
 
     if chars[*pos] == '0' {
         *pos += 1;
-        expect_str(chars, pos, ".").unwrap();
-        number_string.push_str("0.");
-        found_decimal = true;
-        *pos += 1;
+        if find_str(chars, pos, ".") {
+            number_string.push_str("0.");
+            found_decimal = true;
+            *pos += 1;
+        } else {
+            return Err(JsonError::UnexpectToken);
+        }
     }
 
     while *pos < chars.len() {
@@ -183,19 +189,28 @@ fn _parse(chars: &Vec<char>, pos: &mut usize) -> Result<Type, JsonError> {
             parse_string(&chars, pos)
         }
         't' => {
-            expect_str(chars, pos, "true").unwrap();
-            *pos += 4;
-            Ok(Type::Boolean(true))
+            if find_str(chars, pos, "true") {
+                *pos += 4;
+                Ok(Type::Boolean(true))
+            } else {
+                Err(JsonError::UnexpectToken)
+            }
         }
         'f' => {
-            expect_str(chars, pos, "false").unwrap();
-            *pos += 5;
-            Ok(Type::Boolean(false))
+            if find_str(chars, pos, "false") {
+                *pos += 5;
+                Ok(Type::Boolean(false))
+            } else {
+                Err(JsonError::UnexpectToken)
+            }
         }
         'n' => {
-            expect_str(chars, pos, "null").unwrap();
-            *pos += 4;
-            Ok(Type::Null)
+            if find_str(chars, pos, "null") {
+                *pos += 4;
+                Ok(Type::Null)
+            } else {
+                Err(JsonError::UnexpectToken)
+            }
         }
         '0'..='9' | '-' => parse_number(chars, pos),
         _ => Err(JsonError::UnexpectToken),
@@ -216,7 +231,7 @@ pub fn parse(json: &str) -> Result<Type, JsonError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{parse, Type};
+    use crate::{parse, JsonError, Type};
     use std::collections::HashMap;
 
     #[test]
@@ -231,6 +246,8 @@ mod tests {
         assert_eq!(parse("1e+3").unwrap(), Type::Number(1000.0));
         assert_eq!(parse("1e-3").unwrap(), Type::Number(0.001));
         assert_eq!(parse("-1e-3").unwrap(), Type::Number(-0.001));
+        assert_eq!(parse("01").unwrap_err(), JsonError::UnexpectToken);
+        assert_eq!(parse("1.1.1").unwrap_err(), JsonError::UnexpectToken);
         assert_eq!(
             parse("\"hello world\"").unwrap(),
             Type::String("hello world".to_string())
